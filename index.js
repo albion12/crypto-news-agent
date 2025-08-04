@@ -9,6 +9,7 @@ dotenv.config();
 // API configurations
 const CRYPTOPANIC_BASE_URL = 'https://cryptopanic.com/api/developer/v2';
 const COINGECKO_BASE_URL = 'https://api.coingecko.com/api/v3';
+const FEAR_GREED_API_URL = 'https://api.alternative.me/fng/';
 
 // Predefined list of common tokens to detect
 const COMMON_TOKENS = [
@@ -51,6 +52,60 @@ function detectTrendingTokens(newsArticles) {
     .map(([token]) => token);
   
   return sortedTokens;
+}
+
+/**
+ * Fetch global market cap data from CoinGecko API
+ * @returns {Object} Global market cap data
+ */
+async function fetchGlobalMarketCap() {
+  try {
+    console.log('🌍 Fetching global market cap data...');
+    const response = await fetch(`${COINGECKO_BASE_URL}/global`);
+    
+    if (!response.ok) {
+      throw new Error(`CoinGecko Global API error: ${response.status} ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    const globalData = data.data;
+    
+    return {
+      totalMarketCap: globalData.total_market_cap.usd,
+      marketCapChange24h: globalData.market_cap_change_percentage_24h_usd
+    };
+    
+  } catch (error) {
+    console.error('Error fetching global market cap:', error.message);
+    return { totalMarketCap: null, marketCapChange24h: null };
+  }
+}
+
+/**
+ * Fetch Fear & Greed Index from Alternative.me API
+ * @returns {Object} Fear & Greed index data
+ */
+async function fetchFearGreedIndex() {
+  try {
+    console.log('📊 Fetching Fear & Greed Index...');
+    const response = await fetch(FEAR_GREED_API_URL);
+    
+    if (!response.ok) {
+      throw new Error(`Fear & Greed API error: ${response.status} ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    const latestData = data.data[0];
+    
+    return {
+      value: parseInt(latestData.value),
+      classification: latestData.value_classification
+    };
+    
+  } catch (error) {
+    console.error('Error fetching Fear & Greed Index:', error.message);
+    return { value: null, classification: null };
+  }
 }
 
 /**
@@ -274,16 +329,9 @@ async function summarizeNews(newsArticles) {
    URL: ${article.url}`;
     }).join('\n\n');
 
-    const prompt = `Please provide a comprehensive summary of the following cryptocurrency news headlines. Focus on the key trends, market movements, and significant developments. Format the summary in a clear, professional manner:
+    const prompt = `Summarize the following crypto news into a brief update that highlights the most important developments, market movers, and trends. Use a bullet-point format and limit the output to 6–8 key points. Be clear, concise, and professional:
 
-${newsContent}
-
-Please provide:
-1. A brief overview of the main themes and cryptocurrencies mentioned
-2. Key market developments and their potential impact
-3. Notable trends or patterns in the news
-4. Sentiment analysis and market implications
-5. Specific cryptocurrencies that are trending or facing challenges`;
+${newsContent}`;
 
     // Use OpenRouter API for DeepSeek
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -431,6 +479,31 @@ async function main() {
       }
     }
     
+    // Fetch global market cap and fear & greed index
+    console.log('\n🌍 Fetching global market data...');
+    const [globalMarketCap, fearGreedIndex] = await Promise.all([
+      fetchGlobalMarketCap(),
+      fetchFearGreedIndex()
+    ]);
+    
+    // Format global market cap
+    let globalMarketCapText = '';
+    if (globalMarketCap.totalMarketCap !== null && globalMarketCap.marketCapChange24h !== null) {
+      const arrow = globalMarketCap.marketCapChange24h >= 0 ? '↑' : '↓';
+      const absChange = Math.abs(globalMarketCap.marketCapChange24h);
+      const marketCapInTrillions = (globalMarketCap.totalMarketCap / 1e12).toFixed(2);
+      
+      console.log(`🪙 Global Market Cap: $${marketCapInTrillions}T (${arrow} ${absChange.toFixed(1)}%)`);
+      globalMarketCapText = `\n🪙 *Global Market Cap:* $${marketCapInTrillions}T (${arrow} ${absChange.toFixed(1)}%)`;
+    }
+    
+    // Format fear & greed index
+    let fearGreedText = '';
+    if (fearGreedIndex.value !== null && fearGreedIndex.classification !== null) {
+      console.log(`📊 Fear & Greed Index: ${fearGreedIndex.value} (${fearGreedIndex.classification})`);
+      fearGreedText = `\n📊 *Fear & Greed Index:* ${fearGreedIndex.value} (${fearGreedIndex.classification})`;
+    }
+    
     // Send to Telegram if configured
     const botToken = process.env.TELEGRAM_BOT_TOKEN;
     const chatId = process.env.TELEGRAM_CHAT_ID;
@@ -438,10 +511,8 @@ async function main() {
     if (botToken && chatId) {
       console.log('\n📱 Sending summary to Telegram...');
       
-      // Create a formatted message for Telegram
-      const telegramMessage = `🤖 *Crypto News Summary*\n\n📰 *Latest Crypto News Headlines:*\n\n${newsArticles.map((article, index) => 
-        `${index + 1}. *${article.title}*\n   📅 ${new Date(article.publishedAt).toLocaleString()}\n   🔗 [Read More](${article.url})`
-      ).join('\n\n')}\n\n📊 *AI-Generated Summary:*\n\n${summary}\n\n🔥 *Trending Tokens:* ${trendingTokens.join(', ')}${priceSummary}`;
+      // Create a formatted message for Telegram (simplified to avoid formatting issues)
+      const telegramMessage = `🤖 *Crypto News Summary*\n\n📊 *AI-Generated Summary:*\n\n${summary}\n\n🔥 *Trending Tokens:* ${trendingTokens.join(', ')}${priceSummary}${globalMarketCapText}${fearGreedText}`;
       
       await sendToTelegram(telegramMessage, botToken, chatId);
     } else {
