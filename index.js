@@ -6,8 +6,140 @@ import cron from 'node-cron';
 // Load environment variables
 dotenv.config();
 
-// CryptoPanic API configuration
+// API configurations
 const CRYPTOPANIC_BASE_URL = 'https://cryptopanic.com/api/developer/v2';
+const COINGECKO_BASE_URL = 'https://api.coingecko.com/api/v3';
+
+// Predefined list of common tokens to detect
+const COMMON_TOKENS = [
+  'BTC', 'ETH', 'SOL', 'DOGE', 'ADA', 'XRP', 'DOT', 'LINK', 'LTC', 'BCH',
+  'XLM', 'VET', 'TRX', 'FIL', 'UNI', 'ATOM', 'NEO', 'CAKE', 'AVAX', 'ALGO',
+  'MATIC', 'FTM', 'SAND', 'MANA', 'SHIB', 'LUNC', 'BUSD', 'USDC', 'USDT', 'DAI',
+  'WBTC', 'WETH', 'AAVE', 'COMP', 'MKR', 'SNX', 'CRV', 'YFI', 'SUSHI', '1INCH',
+  'BAL', 'REN', 'BAND', 'ZRX', 'BAT', 'ENJ', 'CHZ', 'HOT', 'WIN', 'TRX',
+  'ONT', 'ICX', 'ZIL', 'VET', 'THETA', 'TFUEL', 'HBAR', 'ONE', 'HARMONY', 'ZEN',
+  'QTUM', 'IOTA', 'NANO', 'XMR', 'DASH', 'ZEC', 'RVN', 'GRT', 'OCEAN', 'RLC',
+  'ANKR', 'COTI', 'CELO', 'KAVA', 'ZEN', 'RSR', 'STORJ', 'SKL', 'NU', 'API3',
+  'PERP', 'RAD', 'BADGER', 'FARM', 'PICKLE', 'CREAM', 'ALPHA', 'BETA', 'GAMMA',
+  'DELTA', 'EPSILON', 'ZETA', 'ETA', 'THETA', 'IOTA', 'KAPPA', 'LAMBDA', 'MU'
+];
+
+/**
+ * Detect trending tokens from news content
+ * @param {Array} newsArticles - Array of news articles
+ * @returns {Array} Array of trending token symbols
+ */
+function detectTrendingTokens(newsArticles) {
+  const tokenCounts = {};
+  const allText = newsArticles.map(article => 
+    `${article.title} ${article.summary}`
+  ).join(' ').toUpperCase();
+  
+  // Count mentions of each token
+  COMMON_TOKENS.forEach(token => {
+    const regex = new RegExp(`\\b${token}\\b`, 'gi');
+    const matches = allText.match(regex);
+    if (matches) {
+      tokenCounts[token] = matches.length;
+    }
+  });
+  
+  // Sort by mention count and return top 5
+  const sortedTokens = Object.entries(tokenCounts)
+    .sort(([,a], [,b]) => b - a)
+    .slice(0, 5)
+    .map(([token]) => token);
+  
+  return sortedTokens;
+}
+
+/**
+ * Fetch price data for trending tokens from CoinGecko API
+ * @param {Array} tokenSymbols - Array of token symbols
+ * @returns {Array} Array of price data objects
+ */
+async function fetchTokenPrices(tokenSymbols) {
+  try {
+    if (tokenSymbols.length === 0) return [];
+    
+    // Convert symbols to CoinGecko IDs (simplified mapping)
+    const symbolToId = {
+      'BTC': 'bitcoin', 'ETH': 'ethereum', 'SOL': 'solana', 'DOGE': 'dogecoin',
+      'ADA': 'cardano', 'XRP': 'ripple', 'DOT': 'polkadot', 'LINK': 'chainlink',
+      'LTC': 'litecoin', 'BCH': 'bitcoin-cash', 'XLM': 'stellar', 'VET': 'vechain',
+      'TRX': 'tron', 'FIL': 'filecoin', 'UNI': 'uniswap', 'ATOM': 'cosmos',
+      'NEO': 'neo', 'CAKE': 'pancakeswap-token', 'AVAX': 'avalanche-2',
+      'ALGO': 'algorand', 'MATIC': 'matic-network', 'FTM': 'fantom',
+      'SAND': 'the-sandbox', 'MANA': 'decentraland', 'SHIB': 'shiba-inu',
+      'LUNC': 'terra-luna', 'BUSD': 'binance-usd', 'USDC': 'usd-coin',
+      'USDT': 'tether', 'DAI': 'dai', 'WBTC': 'wrapped-bitcoin',
+      'WETH': 'weth', 'AAVE': 'aave', 'COMP': 'compound-governance-token',
+      'MKR': 'maker', 'SNX': 'havven', 'CRV': 'curve-dao-token',
+      'YFI': 'yearn-finance', 'SUSHI': 'sushi', '1INCH': '1inch',
+      'BAL': 'balancer', 'REN': 'republic-protocol', 'BAND': 'band-protocol',
+      'ZRX': '0x', 'BAT': 'basic-attention-token', 'ENJ': 'enjincoin',
+      'CHZ': 'chiliz', 'HOT': 'holochain', 'WIN': 'wink', 'ONT': 'ontology',
+      'ICX': 'icon', 'ZIL': 'zilliqa', 'THETA': 'theta-token', 'TFUEL': 'theta-fuel',
+      'HBAR': 'hedera-hashgraph', 'ONE': 'harmony', 'HARMONY': 'harmony',
+      'ZEN': 'horizen', 'QTUM': 'qtum', 'IOTA': 'iota', 'NANO': 'nano',
+      'XMR': 'monero', 'DASH': 'dash', 'ZEC': 'zcash', 'RVN': 'ravencoin',
+      'GRT': 'the-graph', 'OCEAN': 'ocean-protocol', 'RLC': 'iexec-rlc',
+      'ANKR': 'ankr', 'COTI': 'coti', 'CELO': 'celo', 'KAVA': 'kava',
+      'RSR': 'reserve-rights-token', 'STORJ': 'storj', 'SKL': 'skale',
+      'NU': 'nucypher', 'API3': 'api3', 'PERP': 'perpetual-protocol',
+      'RAD': 'radicle', 'BADGER': 'badger-dao', 'FARM': 'harvest-finance',
+      'PICKLE': 'pickle-finance', 'CREAM': 'cream-2', 'ALPHA': 'alpha-finance',
+      'BETA': 'beta-finance', 'GAMMA': 'gamma-strategies', 'DELTA': 'delta-exchange-token',
+      'EPSILON': 'epsilon', 'ZETA': 'zeta', 'ETA': 'eta', 'THETA': 'theta-token',
+      'IOTA': 'iota', 'KAPPA': 'kappa', 'LAMBDA': 'lambda', 'MU': 'mu'
+    };
+    
+    const coinIds = tokenSymbols
+      .map(symbol => symbolToId[symbol])
+      .filter(id => id); // Remove undefined mappings
+    
+    if (coinIds.length === 0) return [];
+    
+    const url = `${COINGECKO_BASE_URL}/coins/markets?vs_currency=usd&ids=${coinIds.join(',')}&order=market_cap_desc&per_page=50&page=1&sparkline=false&price_change_percentage=24h`;
+    
+    console.log('💰 Fetching price data from CoinGecko...');
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      throw new Error(`CoinGecko API error: ${response.status} ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    
+    // Map the data back to symbols
+    const priceData = tokenSymbols.map(symbol => {
+      const coinId = symbolToId[symbol];
+      const coinData = data.find(coin => coin.id === coinId);
+      
+      if (coinData) {
+        return {
+          symbol: symbol,
+          price: coinData.current_price,
+          priceChange24h: coinData.price_change_percentage_24h,
+          marketCap: coinData.market_cap
+        };
+      }
+      
+      return {
+        symbol: symbol,
+        price: null,
+        priceChange24h: null,
+        marketCap: null
+      };
+    });
+    
+    return priceData;
+    
+  } catch (error) {
+    console.error('Error fetching token prices:', error.message);
+    return [];
+  }
+}
 
 /**
  * Fetch crypto news headlines from CryptoPanic API
@@ -272,6 +404,33 @@ async function main() {
     console.log(summary);
     console.log('=' .repeat(50));
     
+    // Detect trending tokens
+    console.log('\n🔍 Detecting trending tokens...');
+    const trendingTokens = detectTrendingTokens(newsArticles);
+    console.log(`🔥 Trending: ${trendingTokens.join(', ')}`);
+    
+    // Fetch price data for trending tokens
+    let priceSummary = '';
+    if (trendingTokens.length > 0) {
+      const priceData = await fetchTokenPrices(trendingTokens);
+      
+      if (priceData.length > 0) {
+        console.log('\n💰 Price Impact Summary:');
+        priceSummary = '\n\n💰 *Price Impact Summary:*\n';
+        
+        priceData.forEach(token => {
+          if (token.price !== null && token.priceChange24h !== null) {
+            const arrow = token.priceChange24h >= 0 ? '📈' : '📉';
+            const changeText = token.priceChange24h >= 0 ? 'up' : 'down';
+            const absChange = Math.abs(token.priceChange24h);
+            
+            console.log(`${arrow} ${token.symbol}: $${token.price.toFixed(2)} (${changeText} ${absChange.toFixed(1)}% in 24h)`);
+            priceSummary += `${arrow} *${token.symbol}*: $${token.price.toFixed(2)} (${changeText} ${absChange.toFixed(1)}% in 24h)\n`;
+          }
+        });
+      }
+    }
+    
     // Send to Telegram if configured
     const botToken = process.env.TELEGRAM_BOT_TOKEN;
     const chatId = process.env.TELEGRAM_CHAT_ID;
@@ -282,7 +441,7 @@ async function main() {
       // Create a formatted message for Telegram
       const telegramMessage = `🤖 *Crypto News Summary*\n\n📰 *Latest Crypto News Headlines:*\n\n${newsArticles.map((article, index) => 
         `${index + 1}. *${article.title}*\n   📅 ${new Date(article.publishedAt).toLocaleString()}\n   🔗 [Read More](${article.url})`
-      ).join('\n\n')}\n\n📊 *AI-Generated Summary:*\n\n${summary}`;
+      ).join('\n\n')}\n\n📊 *AI-Generated Summary:*\n\n${summary}\n\n🔥 *Trending Tokens:* ${trendingTokens.join(', ')}${priceSummary}`;
       
       await sendToTelegram(telegramMessage, botToken, chatId);
     } else {
@@ -319,11 +478,11 @@ async function runCryptoNewsTask() {
  */
 function initializeCronJob() {
   console.log('🚀 Initializing Crypto News Agent with Cron Job...');
-  console.log('📅 Scheduled to run every 30 minutes');
+  console.log('📅 Scheduled to run every 2 minutes');
   console.log('⏰ Current time:', new Date().toLocaleString());
   
-  // Schedule the task to run every 30 minutes
-  cron.schedule('*/30 * * * *', () => {
+  // Schedule the task to run every 2 minutes
+  cron.schedule('*/2 * * * *', () => {
     runCryptoNewsTask();
   }, {
     scheduled: true,
